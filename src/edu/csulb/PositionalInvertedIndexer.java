@@ -1,5 +1,7 @@
 package edu.csulb;
 
+import cecs429.classification.KnnClassification;
+import cecs429.classification.RocchioClassification;
 import cecs429.documents.DirectoryCorpus;
 import cecs429.documents.Document;
 import cecs429.documents.DocumentCorpus;
@@ -10,9 +12,11 @@ import cecs429.text.AdvanceTokenProcessor;
 import cecs429.text.EnglishTokenStream;
 import cecs429.text.TokenProcessor;
 import java.io.*;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
+import java.util.stream.Collectors;
 
 public class PositionalInvertedIndexer  {
 	static TokenProcessor tokenProcessor = null;
@@ -31,7 +35,129 @@ public class PositionalInvertedIndexer  {
 
 	public static void main(String[] args) {
 		reader = new BufferedReader(new InputStreamReader(System.in));
-		loadCorpusAndCreateIndex();
+		System.out.println("1. Milestone 2 - for creating disk Index, Boolean queries and Ranked queries");
+		System.out.println("2. Milestone 3 - For Inexact Querying, Text classification etc");
+		try {
+			String input = reader.readLine();
+			if(input.equals("1"))
+				loadCorpusAndCreateIndex();
+			else
+				milestone3();
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+	}
+
+	static void milestone3(){
+		System.out.println("Following any of the below options");
+		System.out.println("1. Inexact retrieval - Vocab elimination");
+		System.out.println("2. Rocchio classification");
+		System.out.println("3. KNN classification");
+		String input="";
+		try {
+			input = reader.readLine();
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+		if(input.equals("1")) {
+			try {
+				System.out.println("Please enter the corpus path:");
+				path = Paths.get(reader.readLine());
+				corpus = DirectoryCorpus.loadDirectory(path.toAbsolutePath());
+				corpusSize = corpus.getCorpusSize();
+				tokenProcessor = new AdvanceTokenProcessor();
+				diskPositionalIndex = new DiskPositionalIndex(path.toString() + File.separator + "index");
+				soudnexpositionalindex = new SoundexPositionalIndex(path.toString() + File.separator + "index");
+				diskPositionalIndex.generateKGrams(3);
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+			RankedQueryParser rankedQueryParser = new RankedQueryParser(diskPositionalIndex
+					, corpusSize
+					, path.toString() + File.separator + "index"
+					, tokenProcessor);
+
+			File queriesFile = new File(path.toString() + File.separator + "relevance" + File.separator + "queries");
+			try (FileReader queriesFileReader = new FileReader(queriesFile);
+				 BufferedReader queriesBufferedReader = new BufferedReader(queriesFileReader)) {
+				List<String> stringList = Files.readAllLines(Paths.get(path.toString() + File.separator + "relevance" + File.separator + "qrel"));
+				String query;
+				int i = 0;
+				double meanAveragePrecision = 0;
+				int countOfQueries = 0;
+				double totalTimeTOExecuteQueries = 0;
+				while ((query = queriesBufferedReader.readLine()) != null) {
+					double summationOfPrecision = 0;
+					int precisionCount = 1;
+					int resultCount = 1;
+					long startTime = System.nanoTime();
+					SearchResult searchResult = rankedQueryParser.getPostings(query, true);
+					long endTime = System.nanoTime();
+					totalTimeTOExecuteQueries += (float) (endTime - startTime);
+					List<Integer> documentsOfNthQuery = Arrays.stream(stringList.get(i)
+							.split(" +"))
+							.map(Integer::parseInt)
+							.collect(Collectors.toList());
+					for (Accumulator accumulator : searchResult.getSearchResults()) {
+						Document rankedRetrieval = corpus.getDocument(accumulator.getDocumentId());
+						int releventIndex = Collections.binarySearch(
+								documentsOfNthQuery
+								, Integer.parseInt(
+										rankedRetrieval.getDocumentName().substring(0, rankedRetrieval.getDocumentName().indexOf('.')))
+						);
+						if (releventIndex >= 0) {
+							summationOfPrecision += (float) precisionCount / resultCount;
+							precisionCount++;
+							System.out.println("Relevant: " + rankedRetrieval.getDocumentName() + " at index " + resultCount);
+						}else{
+							System.out.println("Not relevant: " + rankedRetrieval.getDocumentName() + " at index " + resultCount);
+						}
+						resultCount++;
+					}
+					System.out.println(query + " Average precision is " + (summationOfPrecision / documentsOfNthQuery.size()));
+					meanAveragePrecision += summationOfPrecision / documentsOfNthQuery.size();
+					countOfQueries++;
+					i++;
+				}
+				System.out.println("Mean average precision for all the queries of given corpus is:" + meanAveragePrecision / countOfQueries);
+				double totalResponseTime = totalTimeTOExecuteQueries / (1000000 * 1000);
+				System.out.println("Mean Response time is:" + totalResponseTime / countOfQueries);
+				System.out.println("Throughput is:" + countOfQueries / totalResponseTime);
+			} catch (FileNotFoundException e) {
+				e.printStackTrace();
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+		} else if(input.equals("2")){
+			try {
+				System.out.println("Please enter the corpus path:");
+				String classificationPath  = reader.readLine();
+				RocchioClassification rocchioClassification = new RocchioClassification(classificationPath);
+				Map<String, String> result = rocchioClassification.classify();
+				//System.out.println(result.toString());
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+		}
+		else if(input.equals("3"))
+		{
+			try{
+				System.out.println("Please enter the corpus path:");
+				String classificationPath= reader.readLine();
+				System.out.println("Please enter k value:");
+				String k= reader.readLine();
+				KnnClassification knnClassification=new KnnClassification(classificationPath,Integer.valueOf(k));
+				Map<String, String> result = knnClassification.classify();
+				for(String documentName:result.keySet()){
+					System.out.println("\""+documentName+"\""+"nearest to:");
+					System.out.println(result.get(documentName));
+				}
+			}
+			catch (Exception e)
+			{
+				e.printStackTrace();
+			}
+		}
 	}
 
 	private static Index indexCorpus(DocumentCorpus corpus,TokenProcessor tokenProcessor) {
@@ -166,7 +292,7 @@ public class PositionalInvertedIndexer  {
 				,corpusSize
 				,path.toString()+File.separator+"index"
 				,tokenProcessor);
-		SearchResult searchResult = rankedQueryParser.getPostings(query);
+		SearchResult searchResult = rankedQueryParser.getPostings(query,false);
 		return  searchResult;
 	}
 
